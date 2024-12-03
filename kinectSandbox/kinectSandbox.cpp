@@ -3,6 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 
+//ESTO ESTA EN LA NUBE
+
 int main() {
     // Inicializar el sensor Kinect
     INuiSensor* sensor = nullptr;

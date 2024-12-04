@@ -3,8 +3,6 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 
-//ESTO ESTA EN LA NUBE
-
 int main() {
     // Inicializar el sensor Kinect
     INuiSensor* sensor = nullptr;
@@ -42,9 +40,9 @@ int main() {
     const int width = 640;
     const int height = 480;
 
-    // Definir el rango de profundidad para el mapeo
-    const USHORT minDepth = 500;   // Profundidad mínima en milímetros (0.8 metros)
-    const USHORT maxDepth = 4000; // Profundidad máxima en milímetros (4 metros)
+    // Rango de profundidad deseado (en mm)
+    const USHORT minDepth = 800;   // Profundidad mínima (por ejemplo, la altura del suelo)
+    const USHORT maxDepth = 1200; // Profundidad máxima (por ejemplo, la parte superior del área)
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -59,7 +57,7 @@ int main() {
 
         if (lockedRect.Pitch != 0) {
             USHORT* buffer = (USHORT*)lockedRect.pBits;
-            cv::Mat depthImage(height, width, CV_8UC1);
+            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Inicializar en negro
 
             // Calcular el factor de escala para mapear la profundidad al rango 0-255
             float scale = 255.0f / (maxDepth - minDepth);
@@ -70,21 +68,16 @@ int main() {
                     USHORT depth = buffer[index];
                     USHORT realDepth = depth & 0x0fff; // Extraer los 13 bits de profundidad
 
-                    BYTE intensity = 0;
-
-                    // Verificar si la profundidad está dentro del rango deseado
+                    // Si la profundidad está dentro del rango deseado
                     if (realDepth >= minDepth && realDepth <= maxDepth) {
-                        // Mapear la profundidad al rango de intensidad 0-255
-                        intensity = static_cast<BYTE>((realDepth - minDepth) * scale);
+                        BYTE intensity = static_cast<BYTE>((realDepth - minDepth) * scale);
+                        depthImage.at<BYTE>(y, x) = intensity;
                     }
-                    else {
-                        // Fuera del rango, asignar negro (intensidad mínima)
-                        intensity = 0;
-                    }
-
-                    depthImage.at<BYTE>(y, x) = intensity;
                 }
             }
+
+            // Aplicar suavizado para reducir fluctuaciones en los datos
+            cv::GaussianBlur(depthImage, depthImage, cv::Size(5, 5), 0);
 
             // Aplicar el mapa de colores
             cv::Mat colorImage;
@@ -92,6 +85,12 @@ int main() {
 
             // Mostrar el mapa de elevación en color
             cv::imshow("Mapa de Elevación en Color", colorImage);
+
+            // Mostrar valores en consola para depurar
+            int sampleX = width / 2;  // Píxel en el centro
+            int sampleY = height / 2;
+            USHORT sampleDepth = buffer[sampleX + sampleY * width] & 0x0fff;
+            std::cout << "Profundidad (centro): " << sampleDepth << " mm" << std::endl;
 
             // Salir si se presiona 'Esc'
             if (cv::waitKey(1) == 27) {

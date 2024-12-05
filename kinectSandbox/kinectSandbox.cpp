@@ -40,8 +40,13 @@ int main() {
     const int height = 480;
 
     // Rango de profundidad permitido (en mm)
-    const USHORT minDepth = 700;   // Ligeramente más bajo
-    const USHORT maxDepth = 1600; // Ligeramente más alto
+    const USHORT minDepth = 700;   // Profundidad mínima
+    const USHORT maxDepth = 1600; // Profundidad máxima
+
+    // Niveles de elevación en mm (modifica según tu proyecto)
+    const USHORT nivel1 = 900;   // Nivel bajo (agua, azul)
+    const USHORT nivel2 = 1100;  // Nivel medio (tierra, verde)
+    const USHORT nivel3 = 1300;  // Nivel alto (montañas, marrón)
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -56,11 +61,7 @@ int main() {
 
         if (lockedRect.Pitch != 0) {
             USHORT* buffer = (USHORT*)lockedRect.pBits;
-            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Imagen inicial negra
-            cv::Mat mask(height, width, CV_8UC1, cv::Scalar(0)); // Máscara inicial negra
-
-            // Factor de escala para convertir profundidad a colores (0-255)
-            float scale = 255.0f / (maxDepth - minDepth);
+            cv::Mat depthImage(height, width, CV_8UC3, cv::Scalar(0, 0, 0)); // Imagen en negro con 3 canales (BGR)
 
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
@@ -68,34 +69,33 @@ int main() {
                     USHORT depth = buffer[index];
                     USHORT realDepth = depth & 0x0fff; // Extraer los 13 bits de profundidad
 
-                    // Si la profundidad está dentro del rango deseado
-                    if (realDepth >= minDepth && realDepth <= maxDepth) {
-                        BYTE intensity = static_cast<BYTE>((realDepth - minDepth) * scale);
-                        depthImage.at<BYTE>(y, x) = intensity;
+                    cv::Vec3b color(0, 0, 0); // Color predeterminado (negro)
 
-                        // Crear una máscara que incluya solo el cuerpo
-                        mask.at<BYTE>(y, x) = 255; // Incluir este píxel en la máscara
+                    // Clasificar en niveles de elevación
+                    if (realDepth >= minDepth && realDepth < nivel1) {
+                        // Nivel 1 (agua, azul)
+                        color = cv::Vec3b(255, 0, 0); // Azul
                     }
+                    else if (realDepth >= nivel1 && realDepth < nivel2) {
+                        // Nivel 2 (tierra, verde)
+                        color = cv::Vec3b(0, 255, 0); // Verde
+                    }
+                    else if (realDepth >= nivel2 && realDepth < nivel3) {
+                        // Nivel 3 (montañas, marrón)
+                        color = cv::Vec3b(42, 42, 165); // Marrón
+                    }
+                    else if (realDepth >= nivel3 && realDepth <= maxDepth) {
+                        // Nivel 4 (alturas extremas, blanco)
+                        color = cv::Vec3b(255, 255, 255); // Blanco
+                    }
+
+                    // Asignar el color al píxel
+                    depthImage.at<cv::Vec3b>(y, x) = color;
                 }
             }
 
-            // Rellenar huecos en la máscara
-            cv::Mat dilatedMask;
-            cv::dilate(mask, dilatedMask, cv::Mat(), cv::Point(-1, -1), 2); // Dilatación para interpolar
-
-            // Aplicar suavizado a la imagen de profundidad
-            cv::GaussianBlur(depthImage, depthImage, cv::Size(5, 5), 0);
-
-            // Aplicar el mapa de colores
-            cv::Mat colorImage;
-            cv::applyColorMap(depthImage, colorImage, cv::COLORMAP_JET);
-
-            // Aplicar la máscara dilatada para mostrar el cuerpo completo
-            cv::Mat filteredImage;
-            colorImage.copyTo(filteredImage, dilatedMask);
-
-            // Mostrar la imagen filtrada
-            cv::imshow("Mapa de Elevación Filtrado", filteredImage);
+            // Mostrar la imagen con niveles de elevación
+            cv::imshow("Mapa de Elevación con Niveles", depthImage);
 
             // Salir si se presiona 'Esc'
             if (cv::waitKey(1) == 27) {

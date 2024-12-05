@@ -12,7 +12,6 @@ int main() {
         return -1;
     }
 
-    // Inicializar el flujo de profundidad
     hr = sensor->NuiInitialize(NUI_INITIALIZE_FLAG_USES_DEPTH);
     if (FAILED(hr)) {
         std::cerr << "No se pudo inicializar el flujo de profundidad." << std::endl;
@@ -40,9 +39,9 @@ int main() {
     const int width = 640;
     const int height = 480;
 
-    // Rango de profundidad deseado (en mm)
-    const USHORT minDepth = 800;   // Profundidad mínima (por ejemplo, la altura del suelo)
-    const USHORT maxDepth = 1200; // Profundidad máxima (por ejemplo, la parte superior del área)
+    // Rango de profundidad permitido (en mm)
+    const USHORT minDepth = 700;   // Ligeramente más bajo
+    const USHORT maxDepth = 1600; // Ligeramente más alto
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -57,9 +56,10 @@ int main() {
 
         if (lockedRect.Pitch != 0) {
             USHORT* buffer = (USHORT*)lockedRect.pBits;
-            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Inicializar en negro
+            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Imagen inicial negra
+            cv::Mat mask(height, width, CV_8UC1, cv::Scalar(0)); // Máscara inicial negra
 
-            // Calcular el factor de escala para mapear la profundidad al rango 0-255
+            // Factor de escala para convertir profundidad a colores (0-255)
             float scale = 255.0f / (maxDepth - minDepth);
 
             for (int y = 0; y < height; ++y) {
@@ -72,25 +72,30 @@ int main() {
                     if (realDepth >= minDepth && realDepth <= maxDepth) {
                         BYTE intensity = static_cast<BYTE>((realDepth - minDepth) * scale);
                         depthImage.at<BYTE>(y, x) = intensity;
+
+                        // Crear una máscara que incluya solo el cuerpo
+                        mask.at<BYTE>(y, x) = 255; // Incluir este píxel en la máscara
                     }
                 }
             }
 
-            // Aplicar suavizado para reducir fluctuaciones en los datos
+            // Rellenar huecos en la máscara
+            cv::Mat dilatedMask;
+            cv::dilate(mask, dilatedMask, cv::Mat(), cv::Point(-1, -1), 2); // Dilatación para interpolar
+
+            // Aplicar suavizado a la imagen de profundidad
             cv::GaussianBlur(depthImage, depthImage, cv::Size(5, 5), 0);
 
             // Aplicar el mapa de colores
             cv::Mat colorImage;
             cv::applyColorMap(depthImage, colorImage, cv::COLORMAP_JET);
 
-            // Mostrar el mapa de elevación en color
-            cv::imshow("Mapa de Elevación en Color", colorImage);
+            // Aplicar la máscara dilatada para mostrar el cuerpo completo
+            cv::Mat filteredImage;
+            colorImage.copyTo(filteredImage, dilatedMask);
 
-            // Mostrar valores en consola para depurar
-            int sampleX = width / 2;  // Píxel en el centro
-            int sampleY = height / 2;
-            USHORT sampleDepth = buffer[sampleX + sampleY * width] & 0x0fff;
-            std::cout << "Profundidad (centro): " << sampleDepth << " mm" << std::endl;
+            // Mostrar la imagen filtrada
+            cv::imshow("Mapa de Elevación Filtrado", filteredImage);
 
             // Salir si se presiona 'Esc'
             if (cv::waitKey(1) == 27) {

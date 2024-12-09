@@ -40,8 +40,11 @@ int main() {
     const int height = 480;
 
     // Rango de profundidad permitido (en mm)
-    const USHORT minDepth = 700;   // Ligeramente más bajo
-    const USHORT maxDepth = 1600; // Ligeramente más alto
+    const USHORT minDepth = 700;   // Profundidad mínima
+    const USHORT maxDepth = 1600; // Profundidad máxima
+
+    // Niveles de elevación en mm
+    const USHORT interval = 100; // Intervalo entre contornos
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -56,8 +59,8 @@ int main() {
 
         if (lockedRect.Pitch != 0) {
             USHORT* buffer = (USHORT*)lockedRect.pBits;
-            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Imagen inicial negra
-            cv::Mat mask(height, width, CV_8UC1, cv::Scalar(0)); // Máscara inicial negra
+            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0)); // Imagen inicial en escala de grises
+            cv::Mat colorImage(height, width, CV_8UC3, cv::Scalar(0, 0, 0)); // Imagen en color (BGR)
 
             // Factor de escala para convertir profundidad a colores (0-255)
             float scale = 255.0f / (maxDepth - minDepth);
@@ -68,34 +71,32 @@ int main() {
                     USHORT depth = buffer[index];
                     USHORT realDepth = depth & 0x0fff; // Extraer los 13 bits de profundidad
 
-                    // Si la profundidad está dentro del rango deseado
+                    // Normalizar profundidad al rango 0-255
                     if (realDepth >= minDepth && realDepth <= maxDepth) {
                         BYTE intensity = static_cast<BYTE>((realDepth - minDepth) * scale);
                         depthImage.at<BYTE>(y, x) = intensity;
-
-                        // Crear una máscara que incluya solo el cuerpo
-                        mask.at<BYTE>(y, x) = 255; // Incluir este píxel en la máscara
                     }
                 }
             }
 
-            // Rellenar huecos en la máscara
-            cv::Mat dilatedMask;
-            cv::dilate(mask, dilatedMask, cv::Mat(), cv::Point(-1, -1), 2); // Dilatación para interpolar
-
-            // Aplicar suavizado a la imagen de profundidad
-            cv::GaussianBlur(depthImage, depthImage, cv::Size(5, 5), 0);
-
-            // Aplicar el mapa de colores
-            cv::Mat colorImage;
+            // Aplicar un mapa de colores
             cv::applyColorMap(depthImage, colorImage, cv::COLORMAP_JET);
 
-            // Aplicar la máscara dilatada para mostrar el cuerpo completo
-            cv::Mat filteredImage;
-            colorImage.copyTo(filteredImage, dilatedMask);
+            // Generar contornos topográficos
+            for (int i = minDepth; i <= maxDepth; i += interval) {
+                cv::Mat mask = (depthImage >= ((i - minDepth) * scale / interval)) &
+                    (depthImage < ((i - minDepth + interval) * scale / interval));
 
-            // Mostrar la imagen filtrada
-            cv::imshow("Mapa de Elevación Filtrado", filteredImage);
+                // Detectar contornos en la máscara
+                std::vector<std::vector<cv::Point>> contours;
+                cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+                // Dibujar contornos sobre la imagen en color
+                cv::drawContours(colorImage, contours, -1, cv::Scalar(0, 0, 0), 1);
+            }
+
+            // Mostrar la imagen con contornos
+            cv::imshow("Mapa Topográfico con Contornos", colorImage);
 
             // Salir si se presiona 'Esc'
             if (cv::waitKey(1) == 27) {

@@ -4,6 +4,7 @@
 #include <iostream>
 
 int main() {
+    // Inicializar el sensor Kinect
     INuiSensor* sensor = nullptr;
     HRESULT hr = NuiCreateSensorByIndex(0, &sensor);
     if (FAILED(hr) || sensor == nullptr) {
@@ -18,6 +19,7 @@ int main() {
         return -1;
     }
 
+    // Abrir el flujo de datos de profundidad
     HANDLE depthStream = nullptr;
     hr = sensor->NuiImageStreamOpen(
         NUI_IMAGE_TYPE_DEPTH,
@@ -28,9 +30,9 @@ int main() {
     const int width = 640;
     const int height = 480;
 
-    const USHORT minDepth = 800;   // Profundidad mínima ajustada
-    const USHORT maxDepth = 1500; // Profundidad máxima ajustada
-    const USHORT interval = 50;   // Intervalo para contornos
+    // Rango de profundidad permitido (ajústalo según tu sandbox)
+    const USHORT minDepth = 800;   // Profundidad mínima en mm (0.8 metros)
+    const USHORT maxDepth = 1500;  // Profundidad máxima en mm (1.5 metros)
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -46,16 +48,16 @@ int main() {
             cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0));
             cv::Mat colorImage;
 
-            float scale = 255.0f / (maxDepth - minDepth);
-
-            // Convertir profundidad a escala de grises
+            // Normalización de los datos de profundidad al rango 0-255
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
                     int index = x + y * width;
                     USHORT realDepth = buffer[index] & 0x0fff;
 
+                    // Normalizar solo los valores dentro del rango permitido
                     if (realDepth >= minDepth && realDepth <= maxDepth) {
-                        depthImage.at<BYTE>(y, x) = static_cast<BYTE>((realDepth - minDepth) * scale);
+                        BYTE intensity = static_cast<BYTE>(((realDepth - minDepth) * 255.0f) / (maxDepth - minDepth));
+                        depthImage.at<BYTE>(y, x) = intensity;
                     }
                     else {
                         depthImage.at<BYTE>(y, x) = 0;
@@ -63,22 +65,13 @@ int main() {
                 }
             }
 
-            // Suavizar la imagen para reducir ruido
-            cv::GaussianBlur(depthImage, depthImage, cv::Size(5, 5), 0);
-
-            // Aplicar mapa de colores
+            // Aplicar mapa de colores continuo
             cv::applyColorMap(depthImage, colorImage, cv::COLORMAP_JET);
 
-            // Dibujar contornos topográficos
-            for (int i = 0; i <= 255; i += interval) {
-                cv::Mat mask = (depthImage >= i) & (depthImage < i + interval);
-                std::vector<std::vector<cv::Point>> contours;
-                cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-                cv::drawContours(colorImage, contours, -1, cv::Scalar(0, 0, 0), 1);
-            }
+            // Mostrar la imagen normalizada con mapa de elevación continuo
+            cv::imshow("Mapa de Elevación Continuo", colorImage);
 
-            cv::imshow("Mapa Topográfico con Contornos", colorImage);
-
+            // Salir si se presiona 'Esc'
             if (cv::waitKey(1) == 27) break;
         }
 

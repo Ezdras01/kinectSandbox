@@ -1,7 +1,8 @@
-#include <Windows.h>
+ï»¿#include <Windows.h>
 #include <NuiApi.h>
 #include <opencv2/opencv.hpp>
 #include <iostream>
+#include <cmath>
 
 int main() {
     // Inicializar el sensor Kinect
@@ -29,10 +30,14 @@ int main() {
 
     const int width = 640;
     const int height = 480;
+    const USHORT minDepth = 800;   // 0.8 metros
+    const USHORT maxDepth = 1500;  // 1.5 metros
 
-    // Rango de profundidad permitido (ajústalo según tu sandbox)
-    const USHORT minDepth = 800;   // Profundidad mínima en mm (0.8 metros)
-    const USHORT maxDepth = 1500;  // Profundidad máxima en mm (1.5 metros)
+    // Variables para el efecto de agua
+    cv::Mat waterEffect;
+    float rippleTime = 0.0f;
+    const int waterUpdateRate = 5;  // Actualizar efecto de agua cada X frames
+    int frameCounter = 0;
 
     while (true) {
         NUI_IMAGE_FRAME imageFrame;
@@ -45,38 +50,121 @@ int main() {
 
         if (lockedRect.Pitch != 0) {
             USHORT* buffer = (USHORT*)lockedRect.pBits;
-            cv::Mat depthImage(height, width, CV_8UC1, cv::Scalar(0));
-            cv::Mat colorImage;
+            cv::Mat colorImage(height, width, CV_8UC3, cv::Scalar(0, 0, 0));
 
-            // Normalización de los datos de profundidad al rango 0-255
+            // Crear/actualizar efecto de agua
+            frameCounter++;
+            if (waterEffect.empty() || frameCounter % waterUpdateRate == 0) {
+                waterEffect = cv::Mat(height, width, CV_8UC3);
+
+                cv::Scalar waterBaseColor(220, 200, 150);  // Azul claro (B=220, G=200, R=150)
+                cv::Scalar waterVariance(30, 30, 30);     // VariaciÃ³n permitida en el color
+
+                // Base azul con variaciones sutiles
+                cv::randu(waterEffect, waterBaseColor - waterVariance,
+                    waterBaseColor + waterVariance);
+
+                // AÃ±adir patrones de olas mÃ¡s definidos
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        if (y % 30 == 0 || x % 40 == 0) {
+                            waterEffect.at<cv::Vec3b>(y, x) += cv::Vec3b(10, 5, -5);
+                        }
+
+                        float depthFactor = 1.0f - (y / float(height) * 0.5f);
+                        waterEffect.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                            waterEffect.at<cv::Vec3b>(y, x)[0] * depthFactor,
+                            waterEffect.at<cv::Vec3b>(y, x)[1] * depthFactor,
+                            waterEffect.at<cv::Vec3b>(y, x)[2] * depthFactor
+                        );
+                    }
+                }
+            }
+
+            // Aplicar distorsiÃ³n de onda
+            rippleTime += 0.15f;
+            cv::Mat waterDistorted;
+            waterEffect.copyTo(waterDistorted);
+
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    // DistorsiÃ³n en forma de onda
+                    float wave1 = 8.0f * sin(y * 0.03f + rippleTime * 1.3f);
+                    float wave2 = 5.0f * cos(x * 0.02f + rippleTime * 0.7f);
+                    float wave3 = 3.0f * sin((x + y) * 0.01f + rippleTime * 0.5f);
+
+                    int offsetX = static_cast<int>(wave1 + wave3);
+                    int offsetY = static_cast<int>(wave2 + wave3);
+
+                    int newX = cv::borderInterpolate(x + offsetX, width, cv::BORDER_REFLECT);
+                    int newY = cv::borderInterpolate(y + offsetY, height, cv::BORDER_REFLECT);
+
+                    waterDistorted.at<cv::Vec3b>(y, x) = waterEffect.at<cv::Vec3b>(newY, newX);
+
+                    // AÃ±adir brillo para efecto de espuma
+                    if ((x + y + static_cast<int>(rippleTime * 10)) % 30 == 0) {
+                        waterDistorted.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                            std::min(255, waterDistorted.at<cv::Vec3b>(y, x)[0] + 50),  // Aumentar azul
+                            std::min(255, waterDistorted.at<cv::Vec3b>(y, x)[1] + 50),  // Aumentar verde
+                            std::min(255, waterDistorted.at<cv::Vec3b>(y, x)[2] + 50)   // Aumentar rojo
+                        );
+                    }
+                }
+            }
+
+            // Procesar datos de profundidad
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
                     int index = x + y * width;
                     USHORT realDepth = buffer[index] & 0x0fff;
 
-                    // Normalizar solo los valores dentro del rango permitido
                     if (realDepth >= minDepth && realDepth <= maxDepth) {
-                        BYTE intensity = static_cast<BYTE>(((realDepth - minDepth) * 255.0f) / (maxDepth - minDepth));
-                        depthImage.at<BYTE>(y, x) = intensity;
+                        float position = static_cast<float>(realDepth - minDepth) / (maxDepth - minDepth);
+
+                        if (position < 0.5f) {
+                            // Rojo -> Amarillo
+                            float t = position * 2.0f;
+                            colorImage.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                                0,                                      // B
+                                static_cast<uchar>(t * 255),              // G
+                                255                                      // R
+                            );
+                        }
+                        else {
+                            // Amarillo -> Verde
+                            float t = (position - 0.5f) * 2.0f;
+                            colorImage.at<cv::Vec3b>(y, x) = cv::Vec3b(
+                                0,                                      // B
+                                255,                                    // G
+                                static_cast<uchar>((1.0f - t) * 255)    // R
+                            );
+                        }
                     }
                     else {
-                        depthImage.at<BYTE>(y, x) = 0;
+                        // Usar efecto de agua para Ã¡reas fuera de rango
+                        colorImage.at<cv::Vec3b>(y, x) = waterDistorted.at<cv::Vec3b>(y, x);
                     }
                 }
             }
 
-            // Aplicar mapa de colores continuo
-            cv::applyColorMap(depthImage, colorImage, cv::COLORMAP_JET);
+            // Mostrar informaciÃ³n
+            std::string depthText = "Rango Valido: " +
+                std::to_string(minDepth / 1000.0f) + "m - " +
+                std::to_string(maxDepth / 1000.0f) + "m";
 
-            // Mostrar la imagen normalizada con mapa de elevación continuo
-            cv::imshow("Mapa de Elevación Continuo", colorImage);
+            cv::putText(colorImage, depthText, cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
 
-            // Salir si se presiona 'Esc'
-            if (cv::waitKey(1) == 27) break;
+            cv::putText(colorImage, "Fuera de rango: Efecto agua", cv::Point(10, 60),
+                cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
+
+            cv::imshow("Mapa de Profundidad con Efecto Agua", colorImage);
         }
 
         texture->UnlockRect(0);
         sensor->NuiImageStreamReleaseFrame(depthStream, &imageFrame);
+
+        if (cv::waitKey(30) == 27) break; // Mayor tiempo para mejor animaciÃ³n
     }
 
     sensor->NuiShutdown();
